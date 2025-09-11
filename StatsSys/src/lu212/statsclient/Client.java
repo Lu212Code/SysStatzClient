@@ -17,7 +17,6 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,19 +28,13 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
-import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
-
 import lu212.sysstatz.client.api.SysStatsPlugin;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 
 public class Client {
 
@@ -88,11 +81,7 @@ public class Client {
 
         Client client = new Client();
             client.loadOrCreateName();
-            try {
-				client.runWithReconnect();
-			} catch (IOException e) {
-				e.printStackTrace();
-			}
+            client.runWithReconnect();
     }
 
     
@@ -180,6 +169,10 @@ public class Client {
     }
 
     public void startMonitoring() {
+        if (scheduler != null && !scheduler.isShutdown()) {
+            System.out.println("[WARN] Monitoring läuft bereits!");
+            return;
+        }
         System.out.println("Starte Monitoring...");
         scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "SystemStats-Scheduler");
@@ -198,17 +191,17 @@ public class Client {
     }
 
     public void stopMonitoring() {
-        System.out.println("Stoppe Monitoring...");
-        if (scheduler != null) {
-            scheduler.shutdown();
+        if (scheduler != null && !scheduler.isShutdown()) {
+            System.out.println("Stoppe Monitoring...");
+            scheduler.shutdownNow();  // sofort stoppen
             try {
                 if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                    scheduler.shutdownNow();
+                    System.err.println("Scheduler konnte nicht sauber beendet werden!");
                 }
             } catch (InterruptedException e) {
-                scheduler.shutdownNow();
                 Thread.currentThread().interrupt();
             }
+            scheduler = null;  // sehr wichtig, damit beim Neustart ein neuer Scheduler erstellt wird
         }
     }
 
@@ -321,7 +314,6 @@ public class Client {
             sendMessage(String.format("SERVER:FAN %d", fanSpeeds[0]));
             System.out.printf("Lüfterdrehzahl: %d RPM%n", fanSpeeds[0]);
         } else {
-            System.out.println("Lüfterdrehzahlen nicht verfügbar.");
         }
 
         double cpuVoltage = sensors.getCpuVoltage();
@@ -329,7 +321,6 @@ public class Client {
             sendMessage(String.format("SERVER:CPUVOLTAGE %.2f", cpuVoltage));
             System.out.printf("CPU Spannung: %.2f V%n", cpuVoltage);
         } else {
-            System.out.println("CPU Spannung nicht verfügbar.");
         }
         double[] loadPerCore = processor.getProcessorCpuLoadBetweenTicks(oldTicks);
         long[] freq = processor.getCurrentFreq();
@@ -339,7 +330,6 @@ public class Client {
             double ghz = (i < freq.length) ? freq[i] / 1.0e9 : 0.0;
             sendMessage(String.format("SERVER:CPU_CORE%d_LOAD %.2f", i, coreLoad));
             sendMessage(String.format("SERVER:CPU_CORE%d_FREQ %.2f", i, ghz));
-            System.out.println(i + ", " + ghz);
         }
 
         System.out.println("Sende Systemstats abgeschlossen.");
@@ -615,9 +605,6 @@ public class Client {
                     cpuLoad,
                     memoryUsedMB / 1024.0 // RAM in GB
             ));
-
-            System.out.printf("  → %s (PID %d): CPU %.2f%%, RAM: %d MB%n",
-                    name, pid, cpuLoad, memoryUsedMB);
         }
 
         // Alte Prozesse für nächstes Intervall speichern
@@ -709,12 +696,17 @@ public class Client {
         }
     }
     
-    public void runWithReconnect() throws IOException {
+    public void runWithReconnect() {
         while (true) {
             try {
                 connectAndStart();
             } catch (Exception e) {
                 e.printStackTrace();
+            } finally {
+                // Verbindung verloren → alles sauber beenden
+                stopMonitoring();
+                stopAllPlugins();
+                close();
             }
 
             System.out.println("Verbindung verloren. Neuer Verbindungsversuch in 5 Sekunden...");
