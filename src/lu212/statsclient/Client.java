@@ -69,12 +69,31 @@ public class Client {
     
     private OperatingSystem os;
     private Map<Integer, OSProcess> oldProcesses = new ConcurrentHashMap<>();
-    
+
+    private static boolean deaktivateOutput = false;
 
     private Map<String, SysStatsPlugin> loadedPlugins = new HashMap<>();
     
 
     public static void main(String[] args) {
+    	
+    	if(deaktivateOutput) {
+    	System.setOut(new java.io.PrintStream(new java.io.OutputStream() {
+            @Override
+            public void write(int b) {
+                // nichts tun
+            }
+        }));
+
+        // Unterdrückt alle Ausgaben von System.err
+        System.setErr(new java.io.PrintStream(new java.io.OutputStream() {
+            @Override
+            public void write(int b) {
+                // nichts tun
+            }
+        }));
+    	}
+    	
         System.out.println("SysStats Client - Beta 0.8.0 - Build: 2025-07-31");
 
         loadOrSetupConfig();
@@ -205,14 +224,8 @@ public class Client {
         }
     }
 
-    private void sendSystemStats() {
-        System.out.println("Sende Systemstats...");
-
-        System.out.println("--------------------------------");
-        
+    private void sendSystemStats() {   
         sendProcessStats();
-        
-    	System.out.println("Sende Konfiguration...");
     	sendMessage("SERVER:SCMD " + allowSCMD);
         
         List<NetworkIF> networkIFs = hal.getNetworkIFs();
@@ -227,8 +240,6 @@ public class Client {
 
         sendMessage(String.format("SERVER:NET_SENT %d", totalBytesSent));
         sendMessage(String.format("SERVER:NET_RECV %d", totalBytesRecv));
-        System.out.printf("Netzwerk gesendet: %.2f MB, empfangen: %.2f MB%n",
-            totalBytesSent / (1024.0 * 1024), totalBytesRecv / (1024.0 * 1024));
 
         
         for (NetworkIF net : networkIFs) {
@@ -243,8 +254,6 @@ public class Client {
 
             sendMessage(String.format("SERVER:NET_DELTA_SENT %d", deltaSent));
             sendMessage(String.format("SERVER:NET_DELTA_RECV %d", deltaRecv));
-            System.out.printf("Netzwerk seit letztem Intervall: ↑ %.2f kB, ↓ %.2f kB%n",
-                deltaSent / 1024.0, deltaRecv / 1024.0);
         }
 
         prevSent = totalBytesSent;
@@ -253,13 +262,11 @@ public class Client {
         
         if (prevTicks == null) {
             prevTicks = processor.getSystemCpuLoadTicks();
-            System.out.println("Initiale CPU-Ticks gespeichert, CPU Load = 0.00%");
         } else {
             double cpuLoad = processor.getSystemCpuLoadBetweenTicks(prevTicks) * 100;
             prevTicks = processor.getSystemCpuLoadTicks();
 
             sendMessage(String.format("SERVER:CPU %.2f", cpuLoad));
-            System.out.printf("CPU Load: %.2f%%%n", cpuLoad);
         }
 
         long totalMem = memory.getTotal();
@@ -273,11 +280,6 @@ public class Client {
         sendMessage(String.format("SERVER:RAM_TOTAL_MB %d", totalMem / (1024 * 1024)));
         sendMessage(String.format("SERVER:SWAP_USED_MB %d", swapUsed / (1024 * 1024)));
         sendMessage(String.format("SERVER:SWAP_TOTAL_MB %d", swapTotal / (1024 * 1024)));
-
-        System.out.printf("RAM: verwendet: %d MB, verfügbar: %d MB, gesamt: %d MB%n",
-            usedMem / (1024 * 1024), availableMem / (1024 * 1024), totalMem / (1024 * 1024));
-        System.out.printf("SWAP: verwendet: %d MB, gesamt: %d MB%n",
-            swapUsed / (1024 * 1024), swapTotal / (1024 * 1024));
 
         List<OSFileStore> fsList = fileSystem.getFileStores();
 
@@ -298,28 +300,23 @@ public class Client {
         long usedGB = (totalSpaceBytes - usableSpaceBytes) / (1024L * 1024 * 1024);
 
         sendMessage(String.format("SERVER:DISKUSAGE %d/%d", usedGB, totalGB));
-        System.out.printf("Gesamte Festplattennutzung: %d/%d GB belegt/gesamt%n", usedGB, totalGB);
 
         double cpuTemp = sensors.getCpuTemperature();
         if (cpuTemp > 0) {
         	sendMessage(String.format("SERVER:TEMP %.1f", cpuTemp));
-            System.out.printf("CPU Temperatur: %.1f°C%n", cpuTemp);
         } else {
         	sendMessage("SERVER:TEMP 0");
-            System.out.println("CPU Temperatur nicht verfügbar.");
         }
 
         int[] fanSpeeds = sensors.getFanSpeeds();
         if (fanSpeeds.length > 0) {
             sendMessage(String.format("SERVER:FAN %d", fanSpeeds[0]));
-            System.out.printf("Lüfterdrehzahl: %d RPM%n", fanSpeeds[0]);
         } else {
         }
 
         double cpuVoltage = sensors.getCpuVoltage();
         if (cpuVoltage > 0) {
             sendMessage(String.format("SERVER:CPUVOLTAGE %.2f", cpuVoltage));
-            System.out.printf("CPU Spannung: %.2f V%n", cpuVoltage);
         } else {
         }
         double[] loadPerCore = processor.getProcessorCpuLoadBetweenTicks(oldTicks);
@@ -331,9 +328,6 @@ public class Client {
             sendMessage(String.format("SERVER:CPU_CORE%d_LOAD %.2f", i, coreLoad));
             sendMessage(String.format("SERVER:CPU_CORE%d_FREQ %.2f", i, ghz));
         }
-
-        System.out.println("Sende Systemstats abgeschlossen.");
-        System.out.println("--------------------------------");
     }
 
     public void sendMessage(String message) {
